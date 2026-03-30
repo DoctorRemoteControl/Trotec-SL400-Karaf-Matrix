@@ -1,0 +1,4 @@
+Bundle-Name: SL400 Report
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-report
+Bundle-Version: ${project.version}
+Export-Package: de.drremote.trotecsl400.report;version=${project.version}

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<features xmlns="http://karaf.apache.org/xmlns/features/v1.6.0"
+          name="de.drremote.trotecsl400.features">
+
+  <feature name="sl400-thirdparty" version="${project.version}">
+    <feature prerequisite="true">scr</feature>
+    <feature>wrap</feature>
+
+    <bundle>mvn:org.slf4j/slf4j-api/${slf4j.version}</bundle>
+    <bundle>wrap:mvn:org.slf4j/slf4j-simple/${slf4j.version}</bundle>
+
+    <bundle>mvn:com.fasterxml.jackson.core/jackson-annotations/${jackson.version}</bundle>
+    <bundle>mvn:com.fasterxml.jackson.core/jackson-core/${jackson.version}</bundle>
+    <bundle>mvn:com.fasterxml.jackson.core/jackson-databind/${jackson.version}</bundle>
+
+    <bundle>wrap:mvn:com.squareup.okio/okio/${okio.version}</bundle>
+    <bundle>wrap:mvn:com.squareup.okhttp3/okhttp/${okhttp.version}</bundle>
+
+    <bundle>wrap:mvn:com.fazecast/jSerialComm/${jserialcomm.version}</bundle>
+  </feature>
+
+  <feature name="sl400" version="${project.version}">
+    <feature>sl400-thirdparty</feature>
+
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-api/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-core/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-matrix-sync/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-report/${project.version}</bundle>
+
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-matrix-http/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-storage-json/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-serial-jserialcomm/${project.version}</bundle>
+    <bundle start-level="80">mvn:de.drremote.trotecsl400/sl400-runtime/${project.version}</bundle>
+  </feature>
+
+</features>

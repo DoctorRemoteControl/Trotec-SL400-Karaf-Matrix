@@ -1,0 +1,4 @@
+Bundle-Name: SL400 Storage JSON
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-storage-json
+Bundle-Version: ${project.version}
+Private-Package: de.drremote.trotecsl400.storage

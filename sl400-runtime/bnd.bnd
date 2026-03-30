@@ -1,0 +1,5 @@
+Bundle-Name: SL400 Runtime
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-runtime
+Bundle-Version: ${project.version}
+Private-Package: de.drremote.trotecsl400.runtime
+Import-Package: *

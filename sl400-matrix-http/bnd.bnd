@@ -1,0 +1,4 @@
+Bundle-Name: SL400 Matrix HTTP
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-matrix-http
+Bundle-Version: ${project.version}
+Private-Package: de.drremote.trotecsl400.matrix

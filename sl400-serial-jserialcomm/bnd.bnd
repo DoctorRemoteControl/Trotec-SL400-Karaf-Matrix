@@ -1,0 +1,4 @@
+Bundle-Name: SL400 Serial (jSerialComm)
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-serial-jserialcomm
+Bundle-Version: ${project.version}
+Private-Package: de.drremote.trotecsl400.serial

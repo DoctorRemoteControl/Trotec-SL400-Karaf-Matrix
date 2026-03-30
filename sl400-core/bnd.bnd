@@ -1,0 +1,4 @@
+Bundle-Name: SL400 Core
+Bundle-SymbolicName: de.drremote.trotecsl400.sl400-core
+Bundle-Version: ${project.version}
+Export-Package: de.drremote.trotecsl400.core
