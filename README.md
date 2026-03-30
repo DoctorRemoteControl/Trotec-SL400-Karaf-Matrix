@@ -252,27 +252,39 @@ mvn clean deploy
 
 ---
 
-## Karaf Installation
 
-Add the feature repository:
+## Installation in Karaf
+
+Before installing this project, first prepare your Karaf base setup as described here:
+
+`https://github.com/DoctorRemoteControl/drremote-karaf-setup`
+
+That repository contains the required base setup for Karaf, Maven repositories, and common DrRemote feature repositories.
+
+### Add the SL400 feature repository
 
 ```bash
 feature:repo-add mvn:de.drremote.trotecsl400/sl400-features/0.1.0-SNAPSHOT/xml/features
-```
+````
 
-Install the full stack:
+### Install the SL400 feature
 
 ```bash
 feature:install sl400
 ```
 
-Optional check:
+### Verify the installation
 
 ```bash
+feature:repo-list | grep sl400
 feature:list | grep sl400
+bundle:list | grep trotecsl400
 ```
 
 ---
+
+
+
 
 ## Karaf Configuration
 
