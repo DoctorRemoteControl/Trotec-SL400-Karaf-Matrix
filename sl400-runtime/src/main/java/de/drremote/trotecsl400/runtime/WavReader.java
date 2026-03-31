@@ -34,7 +34,7 @@ public final class WavReader {
             if ("data".equals(chunkId)) {
                 return i + 4;
             }
-            i += 8 + size;
+            i += 8 + size + (size & 1);
         }
         return -1;
     }

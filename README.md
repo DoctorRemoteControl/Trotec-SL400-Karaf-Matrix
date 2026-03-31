@@ -129,7 +129,7 @@ Handles:
 * audio uploads
 * clip reuse via existing MXC URL
 
-This bundle performs direct Matrix HTTP API calls with OkHttp.
+This bundle performs direct Matrix HTTP API calls with the JDK HttpClient.
 
 ---
 
@@ -202,6 +202,7 @@ Config PIDs:
 
 * `de.drremote.trotecsl400.alert`
 * `de.drremote.trotecsl400.matrix`
+* `de.drremote.trotecsl400.matrix.status`
 * `de.drremote.trotecsl400.audio`
 
 ---
@@ -296,13 +297,17 @@ PID:
 
 ```bash
 config:edit de.drremote.trotecsl400.serial
-config:property-set port /dev/ttyUSB0
+config:property-set port AUTO
 config:property-set baudRate 9600
 config:property-set dataBits 8
 config:property-set stopBits 1
 config:property-set parity NONE
 config:property-set readTimeoutMs 1000
 config:property-set reconnectDelayMs 5000
+config:property-set autoDetect true
+config:property-set preferredPortHint
+config:property-set probeTimeoutMs 1500
+config:property-set minSamplesForAutoDetect 2
 config:property-set enabled true
 config:update
 ```
@@ -337,6 +342,26 @@ config:property-set accessToken syt_xxxxxxxxxxxxxxxxx
 config:property-set roomId !alerts:matrix.example.org
 config:property-set deviceId sl400-node-01
 config:property-set enabled true
+config:update
+```
+
+---
+
+## Matrix Status Publishing
+
+PID:
+
+* `de.drremote.trotecsl400.matrix.status`
+
+```bash
+config:edit de.drremote.trotecsl400.matrix.status
+config:property-set enabled true
+config:property-set publishIntervalMs 60000
+config:property-set maxSilenceMs 300000
+config:property-set offlineThresholdMs 15000
+config:property-set onlyOnChange true
+config:property-set statusDbStep 1.0
+config:property-set statusRoomId
 config:update
 ```
 
@@ -426,7 +451,7 @@ Examples:
 !sl400 graph since 24h
 !sl400 report now
 !sl400 clip last
-!sl400 clip incident 1743360000000
+!sl400 clip incident 1743360000000-550e8400-e29b-41d4-a716-446655440000
 !sl400 clips since 2h
 !sl400 audio status
 !sl400 audio start
@@ -469,10 +494,12 @@ Each incident can contain:
 * metric mode
 * metric value
 * threshold
+* hysteresis
 * LAeq metrics
 * max 1 min
 * time above threshold
 * local clip path
+* clip uploaded flag
 * uploaded Matrix MXC URL
 * audio hint
 
@@ -535,11 +562,12 @@ PNG graph with:
 * metric values over time
 * LAeq 5 min series
 * threshold line
-* hysteresis line
+* reset (threshold - hysteresis) line
 
 ### Daily report
 
 The daily report service sends a report for **yesterday** at the configured hour/minute.
+The last report date is persisted to `${karaf.data}/sl400/daily-report-last.txt` to avoid duplicates after restarts.
 
 ---
 

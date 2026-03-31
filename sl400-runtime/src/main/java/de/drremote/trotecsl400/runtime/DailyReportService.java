@@ -51,9 +51,11 @@ public class DailyReportService {
             });
 
     private volatile LocalDate lastReportedDate;
+    private volatile Path lastReportedFile;
 
     @Activate
     void activate() {
+        initLastReportedFile();
         scheduler.scheduleWithFixedDelay(this::tick, 5, 60, TimeUnit.SECONDS);
     }
 
@@ -101,8 +103,43 @@ public class DailyReportService {
 
             sendReport(matrixCfg, roomId, incidents, alertCfg, "yesterday");
             lastReportedDate = reportDay;
+            persistLastReportedDate(reportDay);
         } catch (Exception e) {
             LOG.warn("Daily report tick failed: {}", e.getMessage());
+        }
+    }
+
+    private void initLastReportedFile() {
+        try {
+            String base = System.getProperty("karaf.data", "data");
+            Path baseDir = Path.of(base, "sl400");
+            Files.createDirectories(baseDir);
+            lastReportedFile = baseDir.resolve("daily-report-last.txt");
+            if (Files.exists(lastReportedFile)) {
+                String text = Files.readString(lastReportedFile).trim();
+                if (!text.isBlank()) {
+                    lastReportedDate = LocalDate.parse(text);
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to load daily report state: {}", e.getMessage());
+        }
+    }
+
+    private void persistLastReportedDate(LocalDate date) {
+        if (lastReportedFile == null || date == null) {
+            return;
+        }
+        try {
+            Files.writeString(
+                    lastReportedFile,
+                    date.toString(),
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE
+            );
+        } catch (Exception e) {
+            LOG.debug("Failed to persist daily report state: {}", e.getMessage());
         }
     }
 

@@ -6,15 +6,9 @@
     <feature prerequisite="true">scr</feature>
     <feature>wrap</feature>
 
-    <bundle>mvn:org.slf4j/slf4j-api/${slf4j.version}</bundle>
-    <bundle>wrap:mvn:org.slf4j/slf4j-simple/${slf4j.version}</bundle>
-
     <bundle>mvn:com.fasterxml.jackson.core/jackson-annotations/${jackson.version}</bundle>
     <bundle>mvn:com.fasterxml.jackson.core/jackson-core/${jackson.version}</bundle>
     <bundle>mvn:com.fasterxml.jackson.core/jackson-databind/${jackson.version}</bundle>
-
-    <bundle>wrap:mvn:com.squareup.okio/okio/${okio.version}</bundle>
-    <bundle>wrap:mvn:com.squareup.okhttp3/okhttp/${okhttp.version}</bundle>
 
     <bundle>wrap:mvn:com.fazecast/jSerialComm/${jserialcomm.version}</bundle>
   </feature>

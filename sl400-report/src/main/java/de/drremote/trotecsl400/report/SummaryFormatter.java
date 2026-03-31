@@ -93,7 +93,9 @@ public final class SummaryFormatter {
         if (avgMetric != null && !avgMetric.isNaN()) {
             sb.append("Average incident: ").append(IncidentFormatting.formatDb(avgMetric)).append("\n");
         }
-        sb.append("Time above threshold: ").append(IncidentFormatting.formatDuration(timeAboveMs)).append("\n");
+        sb.append("Sum of incident 1-min threshold-window time: ")
+                .append(IncidentFormatting.formatDuration(timeAboveMs))
+                .append("\n");
         sb.append("Saved clips: ").append(clipsSaved).append("\n");
 
         if (audioRunning == null) {

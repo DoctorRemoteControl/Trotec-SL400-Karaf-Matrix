@@ -27,8 +27,6 @@
     <osgi.cmpn.version>1.6.0</osgi.cmpn.version>
     <bnd.version>6.4.0</bnd.version>
     <jackson.version>2.17.1</jackson.version>
-    <okhttp.version>3.14.9</okhttp.version>
-    <okio.version>1.17.2</okio.version>
     <slf4j.version>1.7.36</slf4j.version>
     <karaf.version>4.4.10</karaf.version>
     <jserialcomm.version>2.11.0</jserialcomm.version>
@@ -36,11 +34,11 @@
 
   <distributionManagement>
     <repository>
-      <id>nexus-releases</id>
+      <id>drremote-releases</id>
       <url>https://repo.drremote.de/repository/maven-releases/</url>
     </repository>
     <snapshotRepository>
-      <id>nexus-snapshots</id>
+      <id>drremote-snapshots</id>
       <url>https://repo.drremote.de/repository/maven-snapshots/</url>
     </snapshotRepository>
   </distributionManagement>
@@ -61,16 +59,6 @@
         <groupId>com.fasterxml.jackson.core</groupId>
         <artifactId>jackson-databind</artifactId>
         <version>${jackson.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>com.squareup.okhttp3</groupId>
-        <artifactId>okhttp</artifactId>
-        <version>${okhttp.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>com.squareup.okio</groupId>
-        <artifactId>okio</artifactId>
-        <version>${okio.version}</version>
       </dependency>
       <dependency>
         <groupId>org.slf4j</groupId>

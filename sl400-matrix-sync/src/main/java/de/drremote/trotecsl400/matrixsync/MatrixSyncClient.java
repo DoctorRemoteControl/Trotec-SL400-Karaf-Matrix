@@ -3,80 +3,94 @@ package de.drremote.trotecsl400.matrixsync;
 import de.drremote.trotecsl400.api.MatrixConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import okhttp3.HttpUrl;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 
 import java.io.IOException;
-import java.util.concurrent.TimeUnit;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
 public class MatrixSyncClient {
-    private final OkHttpClient client = new OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
+    private final HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
             .build();
     private final ObjectMapper mapper = new ObjectMapper();
 
     public String whoAmI(MatrixConfig config) throws IOException {
-        HttpUrl base = parseBaseUrl(config.homeserverBaseUrl());
-        HttpUrl url = base.newBuilder()
-                .addPathSegments("_matrix/client/v3/account/whoami")
+        String base = normalizeBaseUrl(config.homeserverBaseUrl());
+        URI uri = URI.create(base + "/_matrix/client/v3/account/whoami");
+
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(30))
+                .header("Authorization", "Bearer " + config.accessToken())
+                .GET()
                 .build();
 
-        Request request = new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + config.accessToken())
-                .get()
-                .build();
-
-        try (Response resp = client.newCall(request).execute()) {
-            if (!resp.isSuccessful()) {
-                String msg = resp.body() != null ? resp.body().string() : resp.message();
-                throw new IOException("Matrix error " + resp.code() + ": " + msg);
-            }
-            String body = resp.body() != null ? resp.body().string() : "{}";
-            JsonNode json = mapper.readTree(body);
-            return json.path("user_id").asText();
+        HttpResponse<String> resp = send(request);
+        if (!isSuccess(resp.statusCode())) {
+            String msg = resp.body() != null ? resp.body() : "";
+            throw new IOException("Matrix error " + resp.statusCode() + ": " + msg);
         }
+        String body = resp.body() != null ? resp.body() : "{}";
+        JsonNode json = mapper.readTree(body);
+        return json.path("user_id").asText();
     }
 
     public SyncResult sync(MatrixConfig config, String since, int timeoutMs) throws IOException {
-        HttpUrl base = parseBaseUrl(config.homeserverBaseUrl());
-        HttpUrl.Builder url = base.newBuilder()
-                .addPathSegments("_matrix/client/v3/sync")
-                .addQueryParameter("timeout", String.valueOf(timeoutMs));
+        String base = normalizeBaseUrl(config.homeserverBaseUrl());
+        StringBuilder url = new StringBuilder(base)
+                .append("/_matrix/client/v3/sync?timeout=")
+                .append(timeoutMs);
         if (since != null && !since.isBlank()) {
-            url.addQueryParameter("since", since);
+            url.append("&since=")
+               .append(URLEncoder.encode(since, StandardCharsets.UTF_8));
         }
 
-        Request request = new Request.Builder()
-                .url(url.build())
-                .addHeader("Authorization", "Bearer " + config.accessToken())
-                .get()
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url.toString()))
+                .timeout(Duration.ofMillis(Math.max(timeoutMs, 1000) + 10000))
+                .header("Authorization", "Bearer " + config.accessToken())
+                .GET()
                 .build();
 
-        try (Response resp = client.newCall(request).execute()) {
-            if (!resp.isSuccessful()) {
-                String msg = resp.body() != null ? resp.body().string() : resp.message();
-                throw new IOException("Matrix error " + resp.code() + ": " + msg);
-            }
-            String body = resp.body() != null ? resp.body().string() : "{}";
-            return new SyncResult(mapper.readTree(body));
+        HttpResponse<String> resp = send(request);
+        if (!isSuccess(resp.statusCode())) {
+            String msg = resp.body() != null ? resp.body() : "";
+            throw new IOException("Matrix error " + resp.statusCode() + ": " + msg);
         }
+        String body = resp.body() != null ? resp.body() : "{}";
+        return new SyncResult(mapper.readTree(body));
     }
 
-    private HttpUrl parseBaseUrl(String base) {
+    private String normalizeBaseUrl(String base) {
         if (base == null || base.isBlank()) {
             throw new IllegalArgumentException("Homeserver URL is invalid");
         }
         String trimmed = base.trim().replaceAll("/+$", "");
-        HttpUrl url = HttpUrl.parse(trimmed);
-        if (url == null) {
+        try {
+            URI uri = URI.create(trimmed);
+            if (uri.getScheme() == null) {
+                throw new IllegalArgumentException("Homeserver URL is invalid");
+            }
+        } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Homeserver URL is invalid");
         }
-        return url;
+        return trimmed;
+    }
+
+    private HttpResponse<String> send(HttpRequest request) throws IOException {
+        try {
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Matrix request interrupted", e);
+        }
+    }
+
+    private boolean isSuccess(int status) {
+        return status >= 200 && status < 300;
     }
 
     public static class SyncResult {

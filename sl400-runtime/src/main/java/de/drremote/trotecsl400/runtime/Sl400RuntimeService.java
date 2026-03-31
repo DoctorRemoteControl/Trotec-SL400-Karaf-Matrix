@@ -20,6 +20,7 @@ import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -58,6 +59,7 @@ public class Sl400RuntimeService {
 
     private final AlarmEvaluator alarmEvaluator = new AlarmEvaluator();
     private final AcousticMetricsEngine metricsEngine = new AcousticMetricsEngine();
+    private static final long SAMPLE_LOG_INTERVAL_MS = 1000L;
     private final ExecutorService alertExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "sl400-alert-dispatch");
         t.setDaemon(true);
@@ -65,6 +67,7 @@ public class Sl400RuntimeService {
     });
     private final ConcurrentHashMap<String, Long> sentAlerts = new ConcurrentHashMap<>();
     private final java.util.Set<String> inFlight = ConcurrentHashMap.newKeySet();
+    private volatile long lastSampleLogAt = 0L;
 
     @Activate
     void activate() {
@@ -83,6 +86,7 @@ public class Sl400RuntimeService {
         MatrixConfig matrixCfg = matrixConfigService.getConfig();
         AcousticMetrics metrics = metricsEngine.addSample(sample, alertCfg.thresholdDb());
         liveStateService.updateSample(sample, metrics);
+        logSample(sample, metrics);
 
         if (matrixCfg.enabled() && alarmEvaluator.shouldSend(metrics, alertCfg)) {
             String targetRoomId = !alertCfg.targetRoomId().isBlank()
@@ -96,13 +100,14 @@ public class Sl400RuntimeService {
                     matrixCfg.enabled()
             );
 
-            String alertId = String.valueOf(sample.timestampMs());
-            if (isAlreadySent(alertId)) {
+            String dedupKey = buildDedupKey(sample, alertCfg, targetRoomId);
+            if (isAlreadySent(dedupKey)) {
                 return;
             }
-            if (!inFlight.add(alertId)) {
+            if (!inFlight.add(dedupKey)) {
                 return;
             }
+            String alertId = buildIncidentId(sample);
             IncidentRecord incident = new IncidentRecord(
                     alertId,
                     sample.timestampMs(),
@@ -110,6 +115,7 @@ public class Sl400RuntimeService {
                     alertCfg.metricMode().name(),
                     metricValue(metrics, alertCfg),
                     alertCfg.thresholdDb(),
+                    alertCfg.hysteresisDb(),
                     metrics.laEq1Min(),
                     metrics.laEq5Min(),
                     metrics.laEq15Min(),
@@ -123,16 +129,17 @@ public class Sl400RuntimeService {
 
             try {
                 incidentRepository.add(incident);
-                dispatchAlertAsync(alertId, sample, metrics, alertCfg, targetCfg);
+                dispatchAlertAsync(alertId, dedupKey, sample, metrics, alertCfg, targetCfg);
             } catch (Exception e) {
                 LOG.error("Failed to persist/send alert for sample {}", sample.timestampMs(), e);
                 liveStateService.recordError("incident persist/send failed: " + e.getMessage());
-                inFlight.remove(alertId);
+                inFlight.remove(dedupKey);
             }
         }
     }
 
     private void dispatchAlertAsync(String alertId,
+                                    String dedupKey,
                                     Sl400Sample sample,
                                     AcousticMetrics metrics,
                                     AlertConfig alertCfg,
@@ -154,11 +161,11 @@ public class Sl400RuntimeService {
                         matrixPublisher.sendAlert(targetCfg, sample, metrics, alertCfg, hint);
                         sent.set(true);
                         sentWithHint.set(hint != null && !hint.isBlank());
-                        markSent(alertId);
+                        markSent(dedupKey);
                     } catch (Exception e) {
                         LOG.warn("Failed to send alert {}: {}", alertId, e.getMessage());
                     } finally {
-                        inFlight.remove(alertId);
+                        inFlight.remove(dedupKey);
                     }
                 });
 
@@ -179,7 +186,7 @@ public class Sl400RuntimeService {
                 });
             } catch (Exception e) {
                 LOG.warn("Alert dispatch failed: {}", e.getMessage());
-                inFlight.remove(alertId);
+                inFlight.remove(dedupKey);
             }
         });
     }
@@ -206,18 +213,28 @@ public class Sl400RuntimeService {
                 });
     }
 
-    private boolean isAlreadySent(String alertId) {
-        Long ts = sentAlerts.get(alertId);
+    private boolean isAlreadySent(String dedupKey) {
+        Long ts = sentAlerts.get(dedupKey);
         if (ts == null) return false;
         if (System.currentTimeMillis() - ts > SENT_TTL_MS) {
-            sentAlerts.remove(alertId);
+            sentAlerts.remove(dedupKey);
             return false;
         }
         return true;
     }
 
-    private void markSent(String alertId) {
-        sentAlerts.put(alertId, System.currentTimeMillis());
+    private void markSent(String dedupKey) {
+        sentAlerts.put(dedupKey, System.currentTimeMillis());
+    }
+
+    private String buildIncidentId(Sl400Sample sample) {
+        return sample.timestampMs() + "-" + java.util.UUID.randomUUID();
+    }
+
+    private String buildDedupKey(Sl400Sample sample, AlertConfig cfg, String roomId) {
+        return sample.timestampMs()
+                + "|" + cfg.metricMode().name()
+                + "|" + (roomId == null ? "" : roomId);
     }
 
     private Double metricValue(AcousticMetrics metrics, AlertConfig cfg) {
@@ -228,5 +245,31 @@ public class Sl400RuntimeService {
             case LAEQ_15_MIN -> metrics.laEq15Min();
             case MAX_1_MIN -> metrics.maxDb1Min();
         };
+    }
+
+    private void logSample(Sl400Sample sample, AcousticMetrics metrics) {
+        long now = System.currentTimeMillis();
+        if ((now - lastSampleLogAt) < SAMPLE_LOG_INTERVAL_MS) {
+            return;
+        }
+        lastSampleLogAt = now;
+        LOG.info(
+                "SL400 sample: live={} dB, laeq1={} dB, laeq5={} dB, laeq15={} dB, max1={} dB, rawTenths={}, tags={}",
+                fmt(sample.db()),
+                fmt(metrics.laEq1Min()),
+                fmt(metrics.laEq5Min()),
+                fmt(metrics.laEq15Min()),
+                fmt(metrics.maxDb1Min()),
+                sample.rawTenths(),
+                sample.tags()
+        );
+    }
+
+    private String fmt(double value) {
+        return String.format(Locale.US, "%.1f", value);
+    }
+
+    private String fmt(Double value) {
+        return value == null ? "n/a" : String.format(Locale.US, "%.1f", value);
     }
 }

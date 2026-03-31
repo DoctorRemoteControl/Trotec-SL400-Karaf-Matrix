@@ -4,6 +4,7 @@ This bundle uses these ConfigAdmin PIDs:
 
 - `de.drremote.trotecsl400.alert`
 - `de.drremote.trotecsl400.matrix`
+- `de.drremote.trotecsl400.matrix.status`
 - `de.drremote.trotecsl400.audio`
 
 ---
@@ -49,6 +50,26 @@ config:property-set homeserverBaseUrl https://matrix.example.org
 config:property-set accessToken syt_xxxxxxxxxxxxxxxxx
 config:property-set roomId !alerts:matrix.example.org
 config:property-set enabled true
+config:update
+```
+
+---
+
+## Matrix Status Publishing Configuration
+
+PID:
+
+* `de.drremote.trotecsl400.matrix.status`
+
+```sh
+config:edit de.drremote.trotecsl400.matrix.status
+config:property-set enabled true
+config:property-set publishIntervalMs 60000
+config:property-set maxSilenceMs 300000
+config:property-set offlineThresholdMs 15000
+config:property-set onlyOnChange true
+config:property-set statusDbStep 1.0
+config:property-set statusRoomId
 config:update
 ```
 

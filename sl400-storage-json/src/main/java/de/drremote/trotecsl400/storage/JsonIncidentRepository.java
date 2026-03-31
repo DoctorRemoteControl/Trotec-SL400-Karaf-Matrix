@@ -17,7 +17,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 @Component(service = IncidentRepository.class, configurationPid = "de.drremote.trotecsl400.storage")
@@ -52,18 +54,7 @@ public class JsonIncidentRepository implements IncidentRepository {
     @Override
     public void add(IncidentRecord record) {
         synchronized (lock) {
-            ensureDir();
-            try (BufferedWriter writer = Files.newBufferedWriter(
-                    file,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE,
-                    StandardOpenOption.APPEND
-            )) {
-                writer.write(mapper.writeValueAsString(record));
-                writer.newLine();
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to append incident record", e);
-            }
+            appendRecord(record);
         }
     }
 
@@ -144,42 +135,38 @@ public class JsonIncidentRepository implements IncidentRepository {
             return false;
         }
         synchronized (lock) {
-            List<IncidentRecord> all = readAll();
-            boolean updated = false;
-            List<IncidentRecord> out = new ArrayList<>(all.size());
-            for (IncidentRecord r : all) {
-                if (!incidentId.equals(r.incidentId())) {
-                    out.add(r);
-                    continue;
-                }
-                String newClipPath = (clipPath == null || clipPath.isBlank()) ? null : clipPath;
-                boolean clipPathChanged = (r.clipPath() == null && newClipPath != null)
-                        || (r.clipPath() != null && !r.clipPath().equals(newClipPath));
-                boolean clipUploaded = clipPathChanged ? false : r.clipUploaded();
-                String mxcUrl = clipPathChanged ? null : r.mxcUrl();
-                out.add(new IncidentRecord(
-                        r.incidentId(),
-                        r.timestampMs(),
-                        r.roomId(),
-                        r.metricMode(),
-                        r.metricValue(),
-                        r.thresholdDb(),
-                        r.laEq1Min(),
-                        r.laEq5Min(),
-                        r.laEq15Min(),
-                        r.maxDb1Min(),
-                        r.timeAboveThresholdMs1Min(),
-                        newClipPath,
-                        clipUploaded,
-                        mxcUrl,
-                        r.audioHint()
-                ));
-                updated = true;
+            IncidentRecord r = findLatestById(incidentId);
+            if (r == null) {
+                return false;
             }
-            if (updated) {
-                writeAll(out);
+            String newClipPath = (clipPath == null || clipPath.isBlank()) ? null : clipPath;
+            boolean clipPathChanged = (r.clipPath() == null && newClipPath != null)
+                    || (r.clipPath() != null && !r.clipPath().equals(newClipPath));
+            if (!clipPathChanged) {
+                return false;
             }
-            return updated;
+            boolean clipUploaded = clipPathChanged ? false : r.clipUploaded();
+            String mxcUrl = clipPathChanged ? null : r.mxcUrl();
+            IncidentRecord updated = new IncidentRecord(
+                    r.incidentId(),
+                    r.timestampMs(),
+                    r.roomId(),
+                    r.metricMode(),
+                    r.metricValue(),
+                    r.thresholdDb(),
+                    r.hysteresisDb(),
+                    r.laEq1Min(),
+                    r.laEq5Min(),
+                    r.laEq15Min(),
+                    r.maxDb1Min(),
+                    r.timeAboveThresholdMs1Min(),
+                    newClipPath,
+                    clipUploaded,
+                    mxcUrl,
+                    r.audioHint()
+            );
+            appendRecord(updated);
+            return true;
         }
     }
 
@@ -189,37 +176,34 @@ public class JsonIncidentRepository implements IncidentRepository {
             return false;
         }
         synchronized (lock) {
-            List<IncidentRecord> all = readAll();
-            boolean updated = false;
-            List<IncidentRecord> out = new ArrayList<>(all.size());
-            for (IncidentRecord r : all) {
-                if (!incidentId.equals(r.incidentId())) {
-                    out.add(r);
-                    continue;
-                }
-                out.add(new IncidentRecord(
-                        r.incidentId(),
-                        r.timestampMs(),
-                        r.roomId(),
-                        r.metricMode(),
-                        r.metricValue(),
-                        r.thresholdDb(),
-                        r.laEq1Min(),
-                        r.laEq5Min(),
-                        r.laEq15Min(),
-                        r.maxDb1Min(),
-                        r.timeAboveThresholdMs1Min(),
-                        r.clipPath(),
-                        r.clipUploaded(),
-                        r.mxcUrl(),
-                        audioHint
-                ));
-                updated = true;
+            IncidentRecord r = findLatestById(incidentId);
+            if (r == null) {
+                return false;
             }
-            if (updated) {
-                writeAll(out);
+            if ((r.audioHint() == null && (audioHint == null || audioHint.isBlank()))
+                    || (r.audioHint() != null && r.audioHint().equals(audioHint))) {
+                return false;
             }
-            return updated;
+            IncidentRecord updated = new IncidentRecord(
+                    r.incidentId(),
+                    r.timestampMs(),
+                    r.roomId(),
+                    r.metricMode(),
+                    r.metricValue(),
+                    r.thresholdDb(),
+                    r.hysteresisDb(),
+                    r.laEq1Min(),
+                    r.laEq5Min(),
+                    r.laEq15Min(),
+                    r.maxDb1Min(),
+                    r.timeAboveThresholdMs1Min(),
+                    r.clipPath(),
+                    r.clipUploaded(),
+                    r.mxcUrl(),
+                    audioHint
+            );
+            appendRecord(updated);
+            return true;
         }
     }
 
@@ -229,37 +213,35 @@ public class JsonIncidentRepository implements IncidentRepository {
             return false;
         }
         synchronized (lock) {
-            List<IncidentRecord> all = readAll();
-            boolean updated = false;
-            List<IncidentRecord> out = new ArrayList<>(all.size());
-            for (IncidentRecord r : all) {
-                if (!incidentId.equals(r.incidentId())) {
-                    out.add(r);
-                    continue;
-                }
-                out.add(new IncidentRecord(
-                        r.incidentId(),
-                        r.timestampMs(),
-                        r.roomId(),
-                        r.metricMode(),
-                        r.metricValue(),
-                        r.thresholdDb(),
-                        r.laEq1Min(),
-                        r.laEq5Min(),
-                        r.laEq15Min(),
-                        r.maxDb1Min(),
-                        r.timeAboveThresholdMs1Min(),
-                        r.clipPath(),
-                        true,
-                        (mxcUrl == null || mxcUrl.isBlank()) ? null : mxcUrl,
-                        r.audioHint()
-                ));
-                updated = true;
+            IncidentRecord r = findLatestById(incidentId);
+            if (r == null) {
+                return false;
             }
-            if (updated) {
-                writeAll(out);
+            String normalizedUrl = (mxcUrl == null || mxcUrl.isBlank()) ? null : mxcUrl;
+            if (r.clipUploaded() && ((r.mxcUrl() == null && normalizedUrl == null)
+                    || (r.mxcUrl() != null && r.mxcUrl().equals(normalizedUrl)))) {
+                return false;
             }
-            return updated;
+            IncidentRecord updated = new IncidentRecord(
+                    r.incidentId(),
+                    r.timestampMs(),
+                    r.roomId(),
+                    r.metricMode(),
+                    r.metricValue(),
+                    r.thresholdDb(),
+                    r.hysteresisDb(),
+                    r.laEq1Min(),
+                    r.laEq5Min(),
+                    r.laEq15Min(),
+                    r.maxDb1Min(),
+                    r.timeAboveThresholdMs1Min(),
+                    r.clipPath(),
+                    true,
+                    normalizedUrl,
+                    r.audioHint()
+            );
+            appendRecord(updated);
+            return true;
         }
     }
 
@@ -296,13 +278,20 @@ public class JsonIncidentRepository implements IncidentRepository {
         if (file == null || !Files.exists(file)) {
             return List.of();
         }
-        List<IncidentRecord> out = new ArrayList<>();
+        Map<String, IncidentRecord> latest = new LinkedHashMap<>();
+        int[] row = new int[]{0};
         try (Stream<String> lines = Files.lines(file)) {
             lines.map(String::trim)
                     .filter(s -> !s.isEmpty())
                     .forEach(line -> {
                         try {
-                            out.add(mapper.readValue(line, IncidentRecord.class));
+                            IncidentRecord r = mapper.readValue(line, IncidentRecord.class);
+                            String key = r.incidentId();
+                            if (key == null || key.isBlank()) {
+                                key = "__line_" + row[0];
+                            }
+                            latest.put(key, r);
+                            row[0]++;
                         } catch (Exception e) {
                             throw new RuntimeException("Failed to parse incident JSONL line", e);
                         }
@@ -312,7 +301,51 @@ public class JsonIncidentRepository implements IncidentRepository {
         } catch (Exception e) {
             throw new RuntimeException("Failed to read incident records", e);
         }
-        return out;
+        return new ArrayList<>(latest.values());
+    }
+
+    private IncidentRecord findLatestById(String incidentId) {
+        if (incidentId == null || incidentId.isBlank()) {
+            return null;
+        }
+        if (file == null || !Files.exists(file)) {
+            return null;
+        }
+        IncidentRecord found = null;
+        try (Stream<String> lines = Files.lines(file)) {
+            for (String line : (Iterable<String>) lines::iterator) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+                try {
+                    IncidentRecord r = mapper.readValue(trimmed, IncidentRecord.class);
+                    if (incidentId.equals(r.incidentId())) {
+                        found = r;
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to parse incident JSONL line", e);
+                }
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read incident records", e);
+        }
+        return found;
+    }
+
+    private void appendRecord(IncidentRecord record) {
+        ensureDir();
+        try (BufferedWriter writer = Files.newBufferedWriter(
+                file,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.APPEND
+        )) {
+            writer.write(mapper.writeValueAsString(record));
+            writer.newLine();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to append incident record", e);
+        }
     }
 
     private void writeAll(List<IncidentRecord> records) {

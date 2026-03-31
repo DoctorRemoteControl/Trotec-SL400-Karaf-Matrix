@@ -65,6 +65,7 @@ public class MatrixCommandService {
     private volatile String ownUserId;
     private volatile boolean initialized = false;
     private volatile Path syncTokenFile;
+    private volatile String syncIdentity;
 
     @Activate
     void activate() {
@@ -126,6 +127,23 @@ public class MatrixCommandService {
         }
     }
 
+    private void clearSyncTokenFile() {
+        if (syncTokenFile == null) {
+            return;
+        }
+        try {
+            Files.writeString(
+                    syncTokenFile,
+                    "",
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE
+            );
+        } catch (Exception e) {
+            LOG.debug("Failed to clear sync token file: {}", e.getMessage());
+        }
+    }
+
     private void runLoop() {
         while (running) {
             try {
@@ -135,19 +153,29 @@ public class MatrixCommandService {
                     sleepQuiet(5000);
                     continue;
                 }
+                String currentIdentity = buildSyncIdentity(cfg, alertCfg);
+                if (syncIdentity == null || !syncIdentity.equals(currentIdentity)) {
+                    syncIdentity = currentIdentity;
+                    ownUserId = null;
+                    initialized = false;
+                    sinceToken = null;
+                    clearSyncTokenFile();
+                }
                 if (ownUserId == null) {
                     ownUserId = syncClient.whoAmI(cfg);
                 }
                 MatrixSyncClient.SyncResult result = syncClient.sync(cfg, sinceToken, 30000);
                 String next = result.nextBatch();
                 boolean hadToken = sinceToken != null && !sinceToken.isBlank();
-                sinceToken = next;
-                persistSinceToken(sinceToken);
                 if (!initialized && !hadToken) {
+                    sinceToken = next;
+                    persistSinceToken(sinceToken);
                     initialized = true;
                     continue; // first sync without token: skip backlog
                 }
                 handleSync(result.json(), alertCfg, cfg);
+                sinceToken = next;
+                persistSinceToken(sinceToken);
                 initialized = true;
             } catch (Exception e) {
                 LOG.warn("Matrix sync error: {}", e.getMessage());
@@ -161,6 +189,12 @@ public class MatrixCommandService {
                 && cfg.homeserverBaseUrl() != null && !cfg.homeserverBaseUrl().isBlank()
                 && cfg.accessToken() != null && !cfg.accessToken().isBlank()
                 && alertCfg.commandRoomId() != null && !alertCfg.commandRoomId().isBlank();
+    }
+
+    private String buildSyncIdentity(MatrixConfig cfg, AlertConfig alertCfg) {
+        return (cfg.homeserverBaseUrl() == null ? "" : cfg.homeserverBaseUrl())
+                + "|" + (cfg.accessToken() == null ? "" : cfg.accessToken())
+                + "|" + (alertCfg.commandRoomId() == null ? "" : alertCfg.commandRoomId());
     }
 
     private void handleSync(JsonNode json, AlertConfig alertCfg, MatrixConfig matrixCfg) {
@@ -206,6 +240,9 @@ public class MatrixCommandService {
         }
 
         if (result.action != null) {
+            if (result.responseMessage != null && !result.responseMessage.isBlank()) {
+                sendTextSafely(matrixCfg, roomId, result.responseMessage);
+            }
             handleAction(result.action, matrixCfg, roomId);
         } else {
             sendTextSafely(matrixCfg, roomId, result.responseMessage);
@@ -519,7 +556,7 @@ public class MatrixCommandService {
         String body = "SL400 clip (" + label + ") id=" + record.incidentId();
         String mxcUrl = record.mxcUrl();
         String mime = detectAudioMime(clipPath);
-        long clipTs = System.currentTimeMillis();
+        long clipTs = record.timestampMs();
 
         if (record.clipUploaded() && mxcUrl != null && !mxcUrl.isBlank()) {
             String fileName = clipPath == null || clipPath.isBlank()

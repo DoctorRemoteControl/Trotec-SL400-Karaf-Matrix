@@ -9,27 +9,29 @@ import de.drremote.trotecsl400.api.Sl400Sample;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import okhttp3.HttpUrl;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
 import org.osgi.service.component.annotations.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.UUID;
 
 @Component(service = MatrixPublisher.class)
 public class HttpMatrixPublisher implements MatrixPublisher {
     private static final Logger LOG = LoggerFactory.getLogger(HttpMatrixPublisher.class);
-    private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
-    private final OkHttpClient client = new OkHttpClient();
+    private final HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Override
@@ -67,17 +69,20 @@ public class HttpMatrixPublisher implements MatrixPublisher {
         alert.put("timestampMs", sample.timestampMs());
         alert.put("metricMode", alertConfig.metricMode().name());
         alert.put("metricLabel", label);
-        if (triggerValue == null) {
-            alert.putNull("metricValue");
-        } else {
-            alert.put("metricValue", triggerValue);
-        }
-        alert.put("thresholdDb", alertConfig.thresholdDb());
-        alert.put("currentDb", metrics.currentDb());
-        if (metrics.maxDb1Min() == null) alert.putNull("maxDb1Min"); else alert.put("maxDb1Min", metrics.maxDb1Min());
-        if (metrics.laEq1Min() == null) alert.putNull("laEq1Min"); else alert.put("laEq1Min", metrics.laEq1Min());
-        if (metrics.laEq5Min() == null) alert.putNull("laEq5Min"); else alert.put("laEq5Min", metrics.laEq5Min());
-        if (metrics.laEq15Min() == null) alert.putNull("laEq15Min"); else alert.put("laEq15Min", metrics.laEq15Min());
+        Integer metricTenths = dbTenths(triggerValue);
+        Integer thresholdTenths = dbTenths(alertConfig.thresholdDb());
+        Integer currentTenths = dbTenths(metrics.currentDb());
+        Integer max1Tenths = dbTenths(metrics.maxDb1Min());
+        Integer laeq1Tenths = dbTenths(metrics.laEq1Min());
+        Integer laeq5Tenths = dbTenths(metrics.laEq5Min());
+        Integer laeq15Tenths = dbTenths(metrics.laEq15Min());
+        if (metricTenths == null) alert.putNull("metricValueTenths"); else alert.put("metricValueTenths", metricTenths);
+        if (thresholdTenths == null) alert.putNull("thresholdDbTenths"); else alert.put("thresholdDbTenths", thresholdTenths);
+        if (currentTenths == null) alert.putNull("currentDbTenths"); else alert.put("currentDbTenths", currentTenths);
+        if (max1Tenths == null) alert.putNull("maxDb1MinTenths"); else alert.put("maxDb1MinTenths", max1Tenths);
+        if (laeq1Tenths == null) alert.putNull("laEq1MinTenths"); else alert.put("laEq1MinTenths", laeq1Tenths);
+        if (laeq5Tenths == null) alert.putNull("laEq5MinTenths"); else alert.put("laEq5MinTenths", laeq5Tenths);
+        if (laeq15Tenths == null) alert.putNull("laEq15MinTenths"); else alert.put("laEq15MinTenths", laeq15Tenths);
         alert.put("coverage1MinMs", metrics.coverage1MinMs());
         alert.put("coverage5MinMs", metrics.coverage5MinMs());
         alert.put("coverage15MinMs", metrics.coverage15MinMs());
@@ -97,10 +102,14 @@ public class HttpMatrixPublisher implements MatrixPublisher {
     public void sendStatus(MatrixConfig config, Sl400Sample sample, AcousticMetrics metrics,
                            boolean serialOnline, boolean audioRunning) throws Exception {
         ObjectNode metricsNode = mapper.createObjectNode();
-        if (metrics.laEq1Min() == null) metricsNode.putNull("laEq1Min"); else metricsNode.put("laEq1Min", metrics.laEq1Min());
-        if (metrics.laEq5Min() == null) metricsNode.putNull("laEq5Min"); else metricsNode.put("laEq5Min", metrics.laEq5Min());
-        if (metrics.laEq15Min() == null) metricsNode.putNull("laEq15Min"); else metricsNode.put("laEq15Min", metrics.laEq15Min());
-        if (metrics.maxDb1Min() == null) metricsNode.putNull("maxDb1Min"); else metricsNode.put("maxDb1Min", metrics.maxDb1Min());
+        Integer laeq1Tenths = dbTenths(metrics.laEq1Min());
+        Integer laeq5Tenths = dbTenths(metrics.laEq5Min());
+        Integer laeq15Tenths = dbTenths(metrics.laEq15Min());
+        Integer max1Tenths = dbTenths(metrics.maxDb1Min());
+        if (laeq1Tenths == null) metricsNode.putNull("laEq1MinTenths"); else metricsNode.put("laEq1MinTenths", laeq1Tenths);
+        if (laeq5Tenths == null) metricsNode.putNull("laEq5MinTenths"); else metricsNode.put("laEq5MinTenths", laeq5Tenths);
+        if (laeq15Tenths == null) metricsNode.putNull("laEq15MinTenths"); else metricsNode.put("laEq15MinTenths", laeq15Tenths);
+        if (max1Tenths == null) metricsNode.putNull("maxDb1MinTenths"); else metricsNode.put("maxDb1MinTenths", max1Tenths);
         metricsNode.put("coverage1MinMs", metrics.coverage1MinMs());
         metricsNode.put("coverage5MinMs", metrics.coverage5MinMs());
         metricsNode.put("coverage15MinMs", metrics.coverage15MinMs());
@@ -113,7 +122,8 @@ public class HttpMatrixPublisher implements MatrixPublisher {
         content.put("serialOnline", serialOnline);
         content.put("audioRunning", audioRunning);
         content.put("lastSampleTs", sample.timestampMs());
-        content.put("currentDb", sample.db());
+        Integer currentTenths = dbTenths(sample.db());
+        if (currentTenths == null) content.putNull("currentDbTenths"); else content.put("currentDbTenths", currentTenths);
         content.set("metrics", metricsNode);
 
         sendEvent(config, config.roomId(), "m.room.message", content);
@@ -244,32 +254,29 @@ public class HttpMatrixPublisher implements MatrixPublisher {
         if (config.accessToken() == null || config.accessToken().isBlank()) {
             throw new IllegalArgumentException("Access token is missing");
         }
-        HttpUrl baseUrl = parseBaseUrl(config.homeserverBaseUrl());
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegments("_matrix/media/v3/upload")
-                .addQueryParameter("filename", fileName)
+        String baseUrl = normalizeBaseUrl(config.homeserverBaseUrl());
+        String url = baseUrl + "/_matrix/media/v3/upload?filename=" + encodeQuery(fileName);
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(60))
+                .header("Authorization", "Bearer " + config.accessToken())
+                .header("Content-Type", mimeType == null || mimeType.isBlank()
+                        ? "application/octet-stream" : mimeType)
+                .POST(HttpRequest.BodyPublishers.ofFile(file))
                 .build();
 
-        RequestBody body = RequestBody.create(MediaType.parse(mimeType), file.toFile());
-        Request request = new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + config.accessToken())
-                .post(body)
-                .build();
-
-        try (Response resp = client.newCall(request).execute()) {
-            if (!resp.isSuccessful()) {
-                String msg = resp.body() != null ? resp.body().string() : resp.message();
-                throw new IOException("Matrix upload error " + resp.code() + ": " + msg);
-            }
-            String jsonText = resp.body() != null ? resp.body().string() : "{}";
-            JsonNode json = mapper.readTree(jsonText);
-            String contentUri = json.path("content_uri").asText("");
-            if (contentUri.isBlank()) {
-                throw new IOException("Matrix upload missing content_uri");
-            }
-            return contentUri;
+        HttpResponse<String> resp = send(request);
+        if (!isSuccess(resp.statusCode())) {
+            String msg = resp.body() != null ? resp.body() : "";
+            throw new IOException("Matrix upload error " + resp.statusCode() + ": " + msg);
         }
+        String jsonText = resp.body() != null ? resp.body() : "{}";
+        JsonNode json = mapper.readTree(jsonText);
+        String contentUri = json.path("content_uri").asText("");
+        if (contentUri.isBlank()) {
+            throw new IOException("Matrix upload missing content_uri");
+        }
+        return contentUri;
     }
 
     private void sendEvent(MatrixConfig config, String roomId, String eventType, ObjectNode content)
@@ -280,41 +287,61 @@ public class HttpMatrixPublisher implements MatrixPublisher {
         if (roomId == null || roomId.isBlank()) {
             throw new IllegalArgumentException("Room ID is missing");
         }
-        HttpUrl baseUrl = parseBaseUrl(config.homeserverBaseUrl());
+        String baseUrl = normalizeBaseUrl(config.homeserverBaseUrl());
         String txnId = System.currentTimeMillis() + "-" + UUID.randomUUID();
-        HttpUrl url = baseUrl.newBuilder()
-                .addPathSegments("_matrix/client/v3/rooms")
-                .addPathSegment(roomId.trim())
-                .addPathSegments("send")
-                .addPathSegment(eventType)
-                .addPathSegment(txnId)
+        String url = baseUrl + "/_matrix/client/v3/rooms/" + encodePath(roomId.trim())
+                + "/send/" + encodePath(eventType)
+                + "/" + encodePath(txnId);
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Authorization", "Bearer " + config.accessToken())
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(content)))
                 .build();
 
-        RequestBody body = RequestBody.create(JSON, mapper.writeValueAsString(content));
-        Request request = new Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer " + config.accessToken())
-                .put(body)
-                .build();
-
-        try (Response resp = client.newCall(request).execute()) {
-            if (!resp.isSuccessful()) {
-                String msg = resp.body() != null ? resp.body().string() : resp.message();
-                throw new IOException("Matrix error " + resp.code() + ": " + msg);
-            }
+        HttpResponse<String> resp = send(request);
+        if (!isSuccess(resp.statusCode())) {
+            String msg = resp.body() != null ? resp.body() : "";
+            throw new IOException("Matrix error " + resp.statusCode() + ": " + msg);
         }
     }
 
-    private HttpUrl parseBaseUrl(String base) {
+    private String normalizeBaseUrl(String base) {
         if (base == null || base.isBlank()) {
             throw new IllegalArgumentException("Homeserver URL is invalid");
         }
         String trimmed = base.trim().replaceAll("/+$", "");
-        HttpUrl url = HttpUrl.parse(trimmed);
-        if (url == null) {
+        try {
+            URI uri = URI.create(trimmed);
+            if (uri.getScheme() == null) {
+                throw new IllegalArgumentException("Homeserver URL is invalid");
+            }
+        } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Homeserver URL is invalid");
         }
-        return url;
+        return trimmed;
+    }
+
+    private HttpResponse<String> send(HttpRequest request) throws IOException {
+        try {
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Matrix request interrupted", e);
+        }
+    }
+
+    private boolean isSuccess(int status) {
+        return status >= 200 && status < 300;
+    }
+
+    private String encodePath(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private String encodeQuery(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private Double metricValue(AcousticMetrics metrics, MetricMode mode) {
@@ -335,6 +362,13 @@ public class HttpMatrixPublisher implements MatrixPublisher {
             case LAEQ_15_MIN -> "LAeq 15 min";
             case MAX_1_MIN -> "Max 1 min";
         };
+    }
+
+    private Integer dbTenths(Double value) {
+        if (value == null) {
+            return null;
+        }
+        return (int) Math.round(value * 10.0);
     }
 
     private void addEnvelope(ObjectNode content, MatrixConfig config,

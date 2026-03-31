@@ -47,8 +47,11 @@ public class AlarmEvaluator {
             isAbove = false;
         }
 
+        // Repeat alarms only while the metric is actually still above the threshold.
+        // Do not use the hysteresis state alone for periodic sending, otherwise alarms
+        // may continue even after the value has already dropped below thresholdDb.
         if (cfg.sendMode() == SendMode.PERIODIC_WHILE_ABOVE
-                && isAbove
+                && above
                 && now - lastSentAt >= cfg.minSendIntervalMs()) {
             lastSentAt = now;
             return true;

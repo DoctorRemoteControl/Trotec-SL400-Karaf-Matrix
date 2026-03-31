@@ -7,6 +7,7 @@ public record IncidentRecord(
         String metricMode,
         Double metricValue,
         double thresholdDb,
+        Double hysteresisDb,
         Double laEq1Min,
         Double laEq5Min,
         Double laEq15Min,

@@ -18,6 +18,8 @@ import org.osgi.service.metatype.annotations.ObjectClassDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
@@ -29,7 +31,7 @@ public class Sl400SerialSource implements Sl400Source {
     @ObjectClassDefinition(name = "Trotec SL400 Serial Configuration")
     public @interface Config {
         @AttributeDefinition
-        String port() default "/dev/ttyUSB0";
+        String port() default "AUTO";
 
         @AttributeDefinition
         int baudRate() default 9600;
@@ -50,7 +52,25 @@ public class Sl400SerialSource implements Sl400Source {
         int reconnectDelayMs() default 5000;
 
         @AttributeDefinition
+        boolean autoDetect() default true;
+
+        @AttributeDefinition
+        String preferredPortHint() default "";
+
+        @AttributeDefinition
+        int probeTimeoutMs() default 1500;
+
+        @AttributeDefinition
+        int minSamplesForAutoDetect() default 2;
+
+        @AttributeDefinition
         boolean enabled() default true;
+
+        @AttributeDefinition
+        boolean logSamples() default false;
+
+        @AttributeDefinition
+        long sampleLogIntervalMs() default 1000L;
     }
 
     private volatile Sl400SampleListener listener;
@@ -60,6 +80,7 @@ public class Sl400SerialSource implements Sl400Source {
     private volatile Thread readThread;
     private volatile SerialPort portHandle;
     private final Sl400Decoder decoder = new Sl400Decoder();
+    private volatile long lastSampleLogAtMs = 0L;
 
     @Reference(cardinality = ReferenceCardinality.OPTIONAL, policy = ReferencePolicy.DYNAMIC)
     private volatile LiveStateService liveStateService;
@@ -73,6 +94,7 @@ public class Sl400SerialSource implements Sl400Source {
     @Modified
     void activate(Config cfg) {
         this.config = cfg;
+        this.lastSampleLogAtMs = 0L;
         if (running) {
             restart();
         }
@@ -80,6 +102,7 @@ public class Sl400SerialSource implements Sl400Source {
 
     @Override
     public void start() {
+        Thread threadToStart;
         synchronized (lock) {
             if (running) {
                 return;
@@ -91,17 +114,29 @@ public class Sl400SerialSource implements Sl400Source {
             running = true;
             readThread = new Thread(this::runLoop, "sl400-serial-read");
             readThread.setDaemon(true);
-            readThread.start();
+            threadToStart = readThread;
         }
+        threadToStart.start();
     }
 
     @Override
     public void stop() {
+        Thread threadToJoin;
         synchronized (lock) {
             running = false;
+            threadToJoin = readThread;
+            readThread = null;
             closePort();
-            if (readThread != null) {
-                readThread.interrupt();
+            if (threadToJoin != null) {
+                threadToJoin.interrupt();
+            }
+        }
+
+        if (threadToJoin != null && threadToJoin != Thread.currentThread()) {
+            try {
+                threadToJoin.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     }
@@ -112,7 +147,9 @@ public class Sl400SerialSource implements Sl400Source {
     }
 
     private void runLoop() {
-        while (running) {
+        final Thread currentThread = Thread.currentThread();
+
+        while (running && readThread == currentThread) {
             Config cfg = this.config;
             if (cfg == null || !cfg.enabled()) {
                 sleepQuiet(1000);
@@ -127,15 +164,66 @@ public class Sl400SerialSource implements Sl400Source {
             } finally {
                 closePort();
             }
-            if (running) {
+            if (running && readThread == currentThread) {
                 sleepQuiet(cfg.reconnectDelayMs());
             }
         }
     }
 
     private void openPort(Config cfg) {
-        String portName = cfg.port();
-        SerialPort sp = SerialPort.getCommPort(portName);
+        Exception directFailure = null;
+        String configuredPort = normalize(cfg.port());
+
+        if (isExplicitPort(configuredPort)) {
+            try {
+                SerialPort explicit = SerialPort.getCommPort(configuredPort);
+                openConfiguredPort(explicit, cfg, cfg.readTimeoutMs());
+                portHandle = explicit;
+                decoder.reset();
+                LOG.info("Serial port opened (configured): {}", describePort(explicit));
+                return;
+            } catch (Exception e) {
+                directFailure = e;
+                LOG.warn("Configured serial port {} could not be opened: {}", configuredPort, e.getMessage());
+            }
+        }
+
+        if (!cfg.autoDetect()) {
+            if (directFailure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (directFailure != null) {
+                throw new IllegalStateException("Failed to open configured serial port", directFailure);
+            }
+            throw new IllegalStateException("Serial auto-detect is disabled and no usable port is configured");
+        }
+
+        SerialPort detected = detectPort(cfg);
+        if (detected == null) {
+            if (directFailure != null) {
+                throw new IllegalStateException("Configured port failed and auto-detect found no SL400 device", directFailure);
+            }
+            throw new IllegalStateException("No SL400-compatible serial port detected");
+        }
+
+        openConfiguredPort(detected, cfg, cfg.readTimeoutMs());
+        portHandle = detected;
+        decoder.reset();
+        LOG.info("Serial port opened (auto-detected): {}", describePort(detected));
+    }
+
+    private void openConfiguredPort(SerialPort sp, Config cfg, int readTimeoutMs) {
+        configurePort(sp, cfg, readTimeoutMs);
+        sp.clearDTR();
+        sp.clearRTS();
+        if (!sp.openPort()) {
+            throw new IllegalStateException("Failed to open serial port " + safe(sp.getSystemPortName()));
+        }
+        sp.clearDTR();
+        sp.clearRTS();
+    }
+
+    private void configurePort(SerialPort sp, Config cfg, int readTimeoutMs) {
         sp.setComPortParameters(
                 cfg.baudRate(),
                 cfg.dataBits(),
@@ -144,15 +232,103 @@ public class Sl400SerialSource implements Sl400Source {
         );
         sp.setComPortTimeouts(
                 SerialPort.TIMEOUT_READ_SEMI_BLOCKING,
-                Math.max(0, cfg.readTimeoutMs()),
+                Math.max(0, readTimeoutMs),
                 0
         );
-        if (!sp.openPort()) {
-            throw new IllegalStateException("Failed to open serial port " + portName);
+    }
+
+    private SerialPort detectPort(Config cfg) {
+        List<PortCandidate> candidates = rankCandidates(cfg);
+        if (candidates.isEmpty()) {
+            LOG.warn("No serial ports available for auto-detect");
+            return null;
         }
-        portHandle = sp;
-        decoder.reset();
-        LOG.info("Serial port opened: {}", portName);
+
+        for (PortCandidate candidate : candidates) {
+            SerialPort port = candidate.port();
+            LOG.info("Probing serial candidate: {}", describePort(port));
+            if (probeCandidate(port, cfg)) {
+                LOG.info("Auto-detect matched SL400 on {}", describePort(port));
+                return port;
+            }
+        }
+        return null;
+    }
+
+    private List<PortCandidate> rankCandidates(Config cfg) {
+        List<PortCandidate> out = new ArrayList<>();
+        String hint = normalize(cfg.preferredPortHint());
+        for (SerialPort port : SerialPort.getCommPorts()) {
+            out.add(new PortCandidate(port, scorePort(port, hint)));
+        }
+        out.sort(Comparator.comparingInt(PortCandidate::score).reversed());
+        return out;
+    }
+
+    private int scorePort(SerialPort port, String hint) {
+        int score = 0;
+
+        int vid = port.getVendorID();
+        int pid = port.getProductID();
+        if (vid == 0x10C4 && pid == 0xEA60) {
+            score += 100;
+        }
+
+        if (containsIgnoreCase(port.getManufacturer(), "Silicon Labs")) {
+            score += 40;
+        }
+        if (containsIgnoreCase(port.getPortDescription(), "CP210", "USB", "UART")) {
+            score += 30;
+        }
+        if (containsIgnoreCase(port.getDescriptivePortName(), "CP210", "Silicon Labs", "USB", "UART")) {
+            score += 20;
+        }
+
+        if (hint != null && !hint.isBlank() && (
+                containsIgnoreCase(port.getSystemPortName(), hint) ||
+                        containsIgnoreCase(port.getSystemPortPath(), hint) ||
+                        containsIgnoreCase(port.getPortLocation(), hint) ||
+                        containsIgnoreCase(port.getPortDescription(), hint) ||
+                        containsIgnoreCase(port.getDescriptivePortName(), hint) ||
+                        containsIgnoreCase(port.getSerialNumber(), hint) ||
+                        containsIgnoreCase(port.getManufacturer(), hint))) {
+            score += 1000;
+        }
+
+        return score;
+    }
+
+    private boolean probeCandidate(SerialPort port, Config cfg) {
+        byte[] buffer = new byte[256];
+        Sl400Decoder probeDecoder = new Sl400Decoder();
+        int sampleCount = 0;
+        long deadline = System.currentTimeMillis() + Math.max(300, cfg.probeTimeoutMs());
+
+        try {
+            openConfiguredPort(port, cfg, Math.min(Math.max(100, cfg.readTimeoutMs()), 250));
+            while (running && System.currentTimeMillis() < deadline) {
+                int len = port.readBytes(buffer, buffer.length);
+                if (len <= 0) {
+                    continue;
+                }
+                byte[] chunk = new byte[len];
+                System.arraycopy(buffer, 0, chunk, 0, len);
+                sampleCount += probeDecoder.feed(chunk).size();
+                if (sampleCount >= Math.max(1, cfg.minSamplesForAutoDetect())) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            LOG.debug("Probe failed for {}: {}", safe(port.getSystemPortName()), e.getMessage());
+        } finally {
+            try {
+                if (port.isOpen()) {
+                    port.closePort();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
     }
 
     private void readFromPort(Config cfg) {
@@ -168,13 +344,34 @@ public class Sl400SerialSource implements Sl400Source {
                 System.arraycopy(buffer, 0, chunk, 0, len);
                 List<Sl400Sample> samples = decoder.feed(chunk);
                 Sl400SampleListener l = listener;
-                if (l != null) {
-                    for (Sl400Sample s : samples) {
+                for (Sl400Sample s : samples) {
+                    maybeLogSample(s, cfg);
+                    if (l != null) {
                         l.onSample(s);
                     }
                 }
             }
         }
+    }
+
+    private void maybeLogSample(Sl400Sample sample, Config cfg) {
+        if (sample == null || cfg == null || !cfg.logSamples()) {
+            return;
+        }
+        long now = sample.timestampMs();
+        long interval = Math.max(0L, cfg.sampleLogIntervalMs());
+        if (interval > 0L && (now - lastSampleLogAtMs) < interval) {
+            return;
+        }
+        lastSampleLogAtMs = now;
+
+        LOG.info(
+                "SL400 sample: {} dB | raw={} | aux06={} | tags={}",
+                String.format(Locale.US, "%.1f", sample.db()),
+                sample.rawTenths(),
+                sample.aux06Hex() == null || sample.aux06Hex().isBlank() ? "-" : sample.aux06Hex(),
+                sample.tags()
+        );
     }
 
     private void closePort() {
@@ -184,6 +381,50 @@ public class Sl400SerialSource implements Sl400Source {
             sp.closePort();
             LOG.info("Serial port closed");
         }
+    }
+
+    private boolean isExplicitPort(String port) {
+        return port != null && !port.isBlank() && !"AUTO".equalsIgnoreCase(port);
+    }
+
+    private String normalize(String value) {
+        return value == null ? null : value.trim();
+    }
+
+    private boolean containsIgnoreCase(String text, String... needles) {
+        if (text == null || text.isBlank() || needles == null) {
+            return false;
+        }
+        String haystack = text.toLowerCase(Locale.ROOT);
+        for (String needle : needles) {
+            if (needle != null && !needle.isBlank()
+                    && haystack.contains(needle.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String describePort(SerialPort port) {
+        return safe(port.getSystemPortName())
+                + " path=" + safe(port.getSystemPortPath())
+                + " location=" + safe(port.getPortLocation())
+                + " vid=" + toHex(port.getVendorID())
+                + " pid=" + toHex(port.getProductID())
+                + " serial=" + safe(port.getSerialNumber())
+                + " manufacturer=" + safe(port.getManufacturer())
+                + " desc=" + safe(port.getPortDescription());
+    }
+
+    private String toHex(int value) {
+        return value < 0 ? "n/a" : String.format("0x%04X", value);
+    }
+
+    private String safe(String value) {
+        return (value == null || value.isBlank()) ? "-" : value;
+    }
+
+    private record PortCandidate(SerialPort port, int score) {
     }
 
     private int toParity(String parity) {
