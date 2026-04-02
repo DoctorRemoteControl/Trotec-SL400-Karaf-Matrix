@@ -1,9 +1,27 @@
 # SL400 for Apache Karaf
 
+![SL400 Hero](README_hero.png)
+
 SL400 is an OSGi/Karaf-based integration for the **Trotec SL400 sound level meter**.
 It reads live dB values from the device over serial, calculates rolling acoustic metrics, stores incidents, captures short audio clips, analyzes audio hints, and publishes alerts and reports to **Matrix**.
 
 This project is split into small OSGi bundles so the serial input, runtime logic, storage, reporting, and Matrix integration stay modular and replaceable.
+
+---
+
+## At a Glance
+
+### Matrix control and reporting
+
+The system can be controlled and queried directly from Matrix. Commands such as `!sl400 graph today` or `!sl400 set threshold 70` can trigger reports, graphs, and configuration changes without needing a separate web frontend.
+
+![Matrix chat example](image_chatprev.PNG)
+
+### Example incident graph
+
+The runtime can generate PNG graphs showing live values, rolling LAeq values, threshold lines, and reset thresholds. This makes it easy to inspect noise incidents and daily trends directly from Matrix or exported reports.
+
+![Incident graph example](image_graphprev.PNG)
 
 ---
 
@@ -207,19 +225,6 @@ Config PIDs:
 
 ---
 
-### `sl400-features`
-
-Karaf feature descriptor bundle.
-
-Defines features:
-
-* `sl400-thirdparty`
-* `sl400`
-
-This is the module you add to Karaf via `feature:repo-add`.
-
----
-
 ## Architecture
 
 ```text
@@ -253,7 +258,6 @@ mvn clean deploy
 
 ---
 
-
 ## Installation in Karaf
 
 Before installing this project, first prepare your Karaf base setup as described here:
@@ -266,7 +270,7 @@ That repository contains the required base setup for Karaf, Maven repositories, 
 
 ```bash
 feature:repo-add mvn:de.drremote.trotecsl400/sl400-features/0.1.0-SNAPSHOT/xml/features
-````
+```
 
 ### Install the SL400 feature
 
@@ -283,9 +287,6 @@ bundle:list | grep trotecsl400
 ```
 
 ---
-
-
-
 
 ## Karaf Configuration
 
@@ -625,27 +626,9 @@ mvn:de.drremote.trotecsl400/sl400-features/0.1.0-SNAPSHOT/xml/features
 
 ## License
 
-Add your preferred license here, for example:
 
 ```text
 MIT
 ```
 
-or
 
-```text
-Apache-2.0
-```
-
----
-
-## Future Ideas
-
-* better signal classification
-* database-backed incident repository
-* web UI / REST endpoint
-* richer Matrix event schema
-* configurable graph themes
-* retention policy job for incidents and clips
-* tests for decoder and metric engine
-* packaged KAR artifact for simpler deployment
