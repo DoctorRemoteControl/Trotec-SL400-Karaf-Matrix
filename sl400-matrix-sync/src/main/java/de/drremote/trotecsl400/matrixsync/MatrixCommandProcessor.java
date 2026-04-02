@@ -15,6 +15,8 @@ public class MatrixCommandProcessor {
             new MatrixReportCommandHandler(),
             new MatrixGraphCommandHandler(),
             new MatrixClipCommandHandler(),
+            new MatrixHintCommandHandler(),
+            new MatrixFftCommandHandler(),
             new MatrixAudioCommandHandler()
     );
 
@@ -70,6 +72,8 @@ public class MatrixCommandProcessor {
             ReportNow, ReportToday, ReportYesterday, ReportSince,
             GraphSince, GraphToday, GraphYesterday,
             ClipLast, ClipIncident, ClipsSince,
+            HintLast, HintIncident,
+            FftLast, FftIncident,
             AudioStart, AudioStop, AudioStatus {
     }
 
@@ -113,6 +117,14 @@ public class MatrixCommandProcessor {
 
     public record ClipsSince(long durationMs, String label) implements CommandAction {}
 
+    public record HintLast() implements CommandAction {}
+
+    public record HintIncident(String incidentId) implements CommandAction {}
+
+    public record FftLast() implements CommandAction {}
+
+    public record FftIncident(String incidentId) implements CommandAction {}
+
     public record AudioStart() implements CommandAction {}
 
     public record AudioStop() implements CommandAction {}
@@ -146,6 +158,10 @@ public class MatrixCommandProcessor {
                     "!sl400 clip last\n" +
                     "!sl400 clip incident <id>\n" +
                     "!sl400 clips since <duration>\n" +
+                    "!sl400 hint last\n" +
+                    "!sl400 hint incident <id>\n" +
+                    "!sl400 fft last\n" +
+                    "!sl400 fft incident <id>\n" +
                     "!sl400 audio status|start|stop\n";
             return new CommandResult(config, msg);
         }
@@ -534,9 +550,15 @@ public class MatrixCommandProcessor {
                         new IncidentsSince(durationMs, value));
             }
             if ("between".equals(mode)) {
-                String startText = parts.size() > 3 ? parts.get(3) : null;
-                String endText = parts.size() > 4 ? parts.get(4) : null;
-                if (startText == null || endText == null) {
+                String startText;
+                String endText;
+                if (parts.size() >= 5 && parts.get(3).contains("T") && parts.get(4).contains("T")) {
+                    startText = parts.get(3);
+                    endText = parts.get(4);
+                } else if (parts.size() >= 7) {
+                    startText = parts.get(3) + " " + parts.get(4);
+                    endText = parts.get(5) + " " + parts.get(6);
+                } else {
                     return new CommandResult(config,
                             "SL400: Usage `!sl400 incidents between 2026-03-27T18:00 2026-03-27T23:00`.");
                 }
@@ -694,6 +716,48 @@ public class MatrixCommandProcessor {
                         new ClipsSince(durationMs, value));
             }
             return null;
+        }
+    }
+
+    private static class MatrixHintCommandHandler implements MatrixCommandHandler {
+        @Override
+        public CommandResult handle(List<String> parts, AlertConfig config) {
+            if (parts.size() < 2) return null;
+            if (!"hint".equalsIgnoreCase(parts.get(1))) return null;
+            String mode = parts.size() > 2 ? parts.get(2).toLowerCase() : null;
+            if ("last".equals(mode)) {
+                return new CommandResult(config, "SL400: fetching last hint", new HintLast());
+            }
+            if ("incident".equals(mode)) {
+                String id = parts.size() > 3 ? parts.get(3) : null;
+                if (id == null || id.isBlank()) {
+                    return new CommandResult(config, "SL400: Usage `!sl400 hint incident <incidentId>`.");
+                }
+                return new CommandResult(config, "SL400: fetching hint for incident " + id,
+                        new HintIncident(id));
+            }
+            return new CommandResult(config, "SL400: Usage `!sl400 hint last`.");
+        }
+    }
+
+    private static class MatrixFftCommandHandler implements MatrixCommandHandler {
+        @Override
+        public CommandResult handle(List<String> parts, AlertConfig config) {
+            if (parts.size() < 2) return null;
+            if (!"fft".equalsIgnoreCase(parts.get(1))) return null;
+            String mode = parts.size() > 2 ? parts.get(2).toLowerCase() : null;
+            if ("last".equals(mode)) {
+                return new CommandResult(config, "SL400: generating FFT for last clip", new FftLast());
+            }
+            if ("incident".equals(mode)) {
+                String id = parts.size() > 3 ? parts.get(3) : null;
+                if (id == null || id.isBlank()) {
+                    return new CommandResult(config, "SL400: Usage `!sl400 fft incident <incidentId>`.");
+                }
+                return new CommandResult(config, "SL400: generating FFT for incident " + id,
+                        new FftIncident(id));
+            }
+            return new CommandResult(config, "SL400: Usage `!sl400 fft last`.");
         }
     }
 

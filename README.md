@@ -23,6 +23,14 @@ The runtime can generate PNG graphs showing live values, rolling LAeq values, th
 
 ![Incident graph example](image_graphprev.PNG)
 
+### Example FFT spectrum
+
+The runtime can generate FFT spectrum PNGs for captured clips via Matrix commands. This makes it easy to spot dominant frequency bands and overall spectral balance without pulling the raw WAV.
+
+![FFT spectrum example](image_fftprev.PNG)
+
+![FFT graph example](image_fftgraphprev.PNG)
+
 ---
 
 ## Features
@@ -171,6 +179,10 @@ Supports commands such as:
 * `!sl400 report now`
 * `!sl400 graph since 6h`
 * `!sl400 clip last`
+* `!sl400 hint last`
+* `!sl400 hint incident <id>`
+* `!sl400 fft last`
+* `!sl400 fft incident <id>`
 * `!sl400 audio status`
 
 ---
@@ -190,6 +202,12 @@ Used by the runtime to generate:
 * human-readable summaries
 * JSON exports
 * PNG incident graphs
+
+Runtime requirement:
+
+`sl400-report` uses Java2D (`BufferedImage`, `Graphics2D`, `ImageIO`) to render PNG graphs.
+On Raspberry Pi / headless Linux this works fine as long as the Java runtime includes the
+`java.desktop` module. If you use a minimized runtime image, make sure `java.desktop` is present.
 
 ---
 
@@ -454,6 +472,10 @@ Examples:
 !sl400 clip last
 !sl400 clip incident 1743360000000-550e8400-e29b-41d4-a716-446655440000
 !sl400 clips since 2h
+!sl400 hint last
+!sl400 hint incident 1743360000000-550e8400-e29b-41d4-a716-446655440000
+!sl400 fft last
+!sl400 fft incident 1743360000000-550e8400-e29b-41d4-a716-446655440000
 !sl400 audio status
 !sl400 audio start
 !sl400 audio stop

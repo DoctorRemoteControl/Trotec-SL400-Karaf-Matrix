@@ -10,7 +10,10 @@ import de.drremote.trotecsl400.api.MatrixPublisher;
 import de.drremote.trotecsl400.matrixsync.MatrixCommandProcessor;
 import de.drremote.trotecsl400.matrixsync.MatrixSyncClient;
 import de.drremote.trotecsl400.report.JsonExporter;
+import de.drremote.trotecsl400.report.AudioSpectrumAnalyzer;
+import de.drremote.trotecsl400.report.AudioSpectrumRenderer;
 import de.drremote.trotecsl400.report.IncidentGraphRenderer;
+import de.drremote.trotecsl400.report.SpectrumResult;
 import de.drremote.trotecsl400.report.SummaryFormatter;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.osgi.service.component.annotations.Activate;
@@ -369,6 +372,16 @@ public class MatrixCommandService {
                 case MatrixCommandProcessor.ClipsSince a ->
                         sendClipsSince(matrixCfg, roomId, a.durationMs(), a.label());
 
+                case MatrixCommandProcessor.HintLast a ->
+                        sendLastHint(matrixCfg, roomId);
+                case MatrixCommandProcessor.HintIncident a ->
+                        sendHintForIncident(matrixCfg, roomId, a.incidentId());
+
+                case MatrixCommandProcessor.FftLast a ->
+                        sendLastFft(matrixCfg, roomId);
+                case MatrixCommandProcessor.FftIncident a ->
+                        sendFftForIncident(matrixCfg, roomId, a.incidentId());
+
                 case MatrixCommandProcessor.AudioStart a ->
                         sendTextSafely(matrixCfg, roomId,
                                 audioCaptureService.startCapture()
@@ -557,6 +570,7 @@ public class MatrixCommandService {
         String mxcUrl = record.mxcUrl();
         String mime = detectAudioMime(clipPath);
         long clipTs = record.timestampMs();
+        boolean sent = false;
 
         if (record.clipUploaded() && mxcUrl != null && !mxcUrl.isBlank()) {
             String fileName = clipPath == null || clipPath.isBlank()
@@ -564,28 +578,36 @@ public class MatrixCommandService {
                     : Path.of(clipPath).getFileName().toString();
             matrixPublisher.sendClipByMxcUrl(matrixCfg, roomId, record.incidentId(), clipTs,
                     mxcUrl, body, mime, fileName, null);
-            return;
+            sent = true;
         }
-
-        if (clipPath == null || clipPath.isBlank()) {
-            sendTextSafely(matrixCfg, roomId, "SL400: clip missing (" + label + ").");
-            return;
-        }
-        Path file = Path.of(clipPath);
-        if (!Files.exists(file)) {
-            if (mxcUrl != null && !mxcUrl.isBlank()) {
-                String fileName = file.getFileName().toString();
-                matrixPublisher.sendClipByMxcUrl(matrixCfg, roomId, record.incidentId(), clipTs,
-                        mxcUrl, body, mime, fileName, null);
+        if (!sent) {
+            if (clipPath == null || clipPath.isBlank()) {
+                sendTextSafely(matrixCfg, roomId, "SL400: clip missing (" + label + ").");
                 return;
             }
-            sendTextSafely(matrixCfg, roomId, "SL400: clip file not found (" + label + ").");
-            return;
+            Path file = Path.of(clipPath);
+            if (!Files.exists(file)) {
+                if (mxcUrl != null && !mxcUrl.isBlank()) {
+                    String fileName = file.getFileName().toString();
+                    matrixPublisher.sendClipByMxcUrl(matrixCfg, roomId, record.incidentId(), clipTs,
+                            mxcUrl, body, mime, fileName, null);
+                    sent = true;
+                } else {
+                    sendTextSafely(matrixCfg, roomId, "SL400: clip file not found (" + label + ").");
+                    return;
+                }
+            } else {
+                String uploadedUrl = matrixPublisher.sendClip(matrixCfg, roomId, record.incidentId(), clipTs,
+                        file, body, mime);
+                incidentRepository.markUploaded(record.incidentId(), uploadedUrl);
+                sent = true;
+            }
         }
 
-        String uploadedUrl = matrixPublisher.sendClip(matrixCfg, roomId, record.incidentId(), clipTs,
-                file, body, mime);
-        incidentRepository.markUploaded(record.incidentId(), uploadedUrl);
+        if (sent && record.audioHint() != null && !record.audioHint().isBlank()) {
+            sendTextSafely(matrixCfg, roomId,
+                    "SL400 audio hint for incident " + record.incidentId() + ": " + record.audioHint());
+        }
     }
 
     private String detectAudioMime(String clipPath) {
@@ -605,6 +627,120 @@ public class MatrixCommandService {
             matrixPublisher.sendText(matrixCfg, roomId, message);
         } catch (Exception e) {
             LOG.warn("Failed to send matrix response: {}", e.getMessage());
+        }
+    }
+
+    private void sendLastHint(MatrixConfig matrixCfg, String roomId) throws Exception {
+        IncidentRecord last = incidentRepository.getLastClipIncident();
+        if (last == null) {
+            sendTextSafely(matrixCfg, roomId, "SL400: no incidents with clip available.");
+            return;
+        }
+        sendHintRecord(matrixCfg, roomId, last);
+    }
+
+    private void sendHintForIncident(MatrixConfig matrixCfg, String roomId, String incidentId)
+            throws Exception {
+        IncidentRecord record = incidentRepository.getIncidentById(incidentId);
+        if (record == null) {
+            sendTextSafely(matrixCfg, roomId, "SL400: incident not found: " + incidentId);
+            return;
+        }
+        sendHintRecord(matrixCfg, roomId, record);
+    }
+
+    private void sendHintRecord(MatrixConfig matrixCfg, String roomId, IncidentRecord record) {
+        String hint = record.audioHint();
+        if (hint == null || hint.isBlank()) {
+            sendTextSafely(matrixCfg, roomId,
+                    "SL400: no audio hint available yet for incident " + record.incidentId() + ".");
+            return;
+        }
+        sendTextSafely(matrixCfg, roomId,
+                "SL400 audio hint for incident " + record.incidentId() + ": " + hint);
+    }
+
+    private void sendLastFft(MatrixConfig matrixCfg, String roomId) throws Exception {
+        IncidentRecord last = incidentRepository.getLastClipIncident();
+        if (hasLocalClip(last)) {
+            sendFftRecord(matrixCfg, roomId, last, "last clip");
+            return;
+        }
+
+        List<IncidentRecord> clips = incidentRepository.getClipsSince(3650L * 86_400_000L);
+        clips.sort(Comparator.comparingLong(IncidentRecord::timestampMs).reversed());
+        for (IncidentRecord record : clips) {
+            if (hasLocalClip(record)) {
+                sendFftRecord(matrixCfg, roomId, record, "last local clip");
+                return;
+            }
+        }
+
+        sendTextSafely(matrixCfg, roomId, "SL400: no local clips available for FFT.");
+    }
+
+    private void sendFftForIncident(MatrixConfig matrixCfg, String roomId, String incidentId)
+            throws Exception {
+        IncidentRecord record = incidentRepository.getIncidentById(incidentId);
+        if (record == null) {
+            sendTextSafely(matrixCfg, roomId, "SL400: incident not found: " + incidentId);
+            return;
+        }
+        sendFftRecord(matrixCfg, roomId, record, "incident " + incidentId);
+    }
+
+    private void sendFftRecord(MatrixConfig matrixCfg, String roomId,
+                               IncidentRecord record, String label) throws Exception {
+        if (!hasLocalClip(record)) {
+            sendTextSafely(matrixCfg, roomId, "SL400: no clip available for " + label + ".");
+            return;
+        }
+        Path wav = Path.of(record.clipPath());
+
+        Path png = null;
+        try {
+            SpectrumResult spectrum = AudioSpectrumAnalyzer.analyze(wav);
+            png = AudioSpectrumRenderer.renderSpectrumPng(
+                    spectrum,
+                    "SL400 FFT (" + label + ") id=" + record.incidentId()
+            );
+            matrixPublisher.sendImage(
+                    matrixCfg,
+                    roomId,
+                    png,
+                    "SL400 FFT (" + label + ") id=" + record.incidentId(),
+                    "image/png"
+            );
+            sendTextSafely(
+                    matrixCfg,
+                    roomId,
+                    String.format(
+                            java.util.Locale.US,
+                            "SL400 FFT for incident %s: dominant=%.0f Hz, centroid=%.0f Hz",
+                            record.incidentId(),
+                            spectrum.dominantFrequencyHz(),
+                            spectrum.spectralCentroidHz()
+                    )
+            );
+        } finally {
+            if (png != null) {
+                try {
+                    Files.deleteIfExists(png);
+                } catch (Exception e) {
+                    LOG.debug("Failed to delete temp FFT {}", png, e);
+                }
+            }
+        }
+    }
+
+    private boolean hasLocalClip(IncidentRecord record) {
+        if (record == null || record.clipPath() == null || record.clipPath().isBlank()) {
+            return false;
+        }
+        try {
+            return Files.exists(Path.of(record.clipPath()));
+        } catch (Exception e) {
+            return false;
         }
     }
 }

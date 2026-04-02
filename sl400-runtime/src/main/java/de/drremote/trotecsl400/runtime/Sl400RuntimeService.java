@@ -153,7 +153,7 @@ public class Sl400RuntimeService {
                 AtomicBoolean sentWithHint = new AtomicBoolean(false);
 
                 CompletableFuture<String> timedHint = waitForHint
-                        ? hintFuture.completeOnTimeout(null, HINT_WAIT_MS, TimeUnit.MILLISECONDS)
+                        ? hintFuture.applyToEither(timeoutAfter(HINT_WAIT_MS), hint -> hint)
                         : CompletableFuture.completedFuture(null);
 
                 timedHint.whenComplete((hint, err) -> {
@@ -211,6 +211,13 @@ public class Sl400RuntimeService {
                             audioCaptureService.getSampleRate()
                     );
                 });
+    }
+
+    private CompletableFuture<String> timeoutAfter(long timeoutMs) {
+        return CompletableFuture.supplyAsync(
+                () -> null,
+                CompletableFuture.delayedExecutor(timeoutMs, TimeUnit.MILLISECONDS)
+        );
     }
 
     private boolean isAlreadySent(String dedupKey) {
